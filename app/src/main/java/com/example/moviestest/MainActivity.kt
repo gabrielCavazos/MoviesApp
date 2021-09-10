@@ -1,8 +1,13 @@
 package com.example.moviestest
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.widget.Toast
+import androidx.lifecycle.Observer
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.moviestest.databinding.ActivityMainBinding
 import kotlinx.coroutines.CoroutineScope
@@ -36,8 +41,22 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         initRecycler()
-        findMovies()
+        if(checkForInternet(this))
+            findMovies()
+        else
+            fetchSavedMovies()
 
+    }
+
+    private fun fetchSavedMovies(){
+        val dataBase = AppDataBase.getDatabase(this@MainActivity)
+
+        dataBase.movies().getAll().observe(this@MainActivity, Observer{
+            movieList.clear()
+            movieList.addAll(it)
+            adapter.notifyDataSetChanged()
+
+        })
     }
 
     private fun getRetrofit(): Retrofit {
@@ -52,18 +71,67 @@ class MainActivity : AppCompatActivity() {
         CoroutineScope(Dispatchers.IO).launch {
             val call: Response<MoviesResponse> = getRetrofit().create(APIService::class.java).getMovies("movie/popular?api_key=6f69d45e4cfbba1a8cd274b29616477f&language=en-US&page=1")
             val moviesResponse = call.body()
-            runOnUiThread{
-                if(call.isSuccessful){
-                    val movies = moviesResponse?.movies?: emptyList<Movie>()
-                    movieList.clear()
-                    movieList.addAll(movies)
-                    adapter.notifyDataSetChanged()
+            val dataBase = AppDataBase.getDatabase(this@MainActivity)
+            if(call.isSuccessful){
 
-                }else{
-                    showError()
+                dataBase.movies().deleteAll()
+                val movies = moviesResponse?.movies?: emptyList<Movie>()
+                movieList.clear()
+                movieList.addAll(movies)
+                for (movie in movies) {
+                    dataBase.movies().insert(movie)
                 }
+
+            }else{
+
+
+
+                showError()
+            }
+            runOnUiThread{
+
+                adapter.notifyDataSetChanged()
             }
 
+        }
+    }
+
+    private fun checkForInternet(context: Context): Boolean {
+
+        // register activity with the connectivity manager service
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        // if the android version is equal to M
+        // or greater we need to use the
+        // NetworkCapabilities to check what type of
+        // network has the internet connection
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+
+            // Returns a Network object corresponding to
+            // the currently active default data network.
+            val network = connectivityManager.activeNetwork ?: return false
+
+            // Representation of the capabilities of an active network.
+            val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
+
+            return when {
+                // Indicates this network uses a Wi-Fi transport,
+                // or WiFi has network connectivity
+                activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> true
+
+                // Indicates this network uses a Cellular transport. or
+                // Cellular has network connectivity
+                activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> true
+
+                // else return false
+                else -> false
+            }
+        } else {
+            // if the android version is below M
+            @Suppress("DEPRECATION") val networkInfo =
+                connectivityManager.activeNetworkInfo ?: return false
+            @Suppress("DEPRECATION")
+            return networkInfo.isConnected
         }
     }
 
